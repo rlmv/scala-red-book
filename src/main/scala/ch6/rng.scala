@@ -11,8 +11,8 @@ case class SimpleRNG(seed: Long) extends RNG {
   }
 }
 
+object RNG extends App {
 
-object Test extends App {
   val seeds = List(1, 100, 1000)
   val rngs = seeds.map(SimpleRNG(_))
 
@@ -63,6 +63,22 @@ object Test extends App {
 
   println(ints(0)(rngs(0)))
   println(ints(3)(rngs(0)))
+
+  type Rand[+A] = RNG => (A, RNG)
+
+  val int: Rand[Int] = _.nextInt
+
+  def unit[A](a: A): Rand[A] =
+    rng => (a, rng)
+
+  def map[A,B](s: Rand[A])(f: A => B): Rand[B] =
+    rng => {
+      val (a, newRng) = s(rng)
+      (f(a), newRng)
+    }
+
+  def nonNegativeEven: Rand[Int] =
+    map(nonNegativeInt)(i => i - i % 2)
 
 
 }
