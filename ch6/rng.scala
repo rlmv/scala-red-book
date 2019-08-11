@@ -34,11 +34,6 @@ object RNG extends App {
 
   results(nonNegativeInt)
 
-  def double(rng: RNG): (Double, RNG) = {
-    val (n, nextRNG) = nonNegativeInt(rng)
-    (n.toDouble / Int.MaxValue, nextRNG)
-  }
-
   results(double)
 
   def intDouble(rng1: RNG): ((Int, Double), RNG) = {
@@ -80,5 +75,47 @@ object RNG extends App {
   def nonNegativeEven: Rand[Int] =
     map(nonNegativeInt)(i => i - i % 2)
 
+  def double: Rand[Double] =
+    map(nonNegativeInt)(i => i.toDouble / Int.MaxValue)
+
+  def map2[A,B,C](ra: Rand[A], rb: Rand[B])(f: (A, B) => C): Rand[C] =
+    rng => {
+      val (a, rngA) = ra(rng)
+      val (b, rngB) = rb(rngA)
+      (f(a, b), rngB)
+    }
+
+  def both[A,B](ra: Rand[A], rb: Rand[B]): Rand[(A,B)] =
+    map2(ra, rb)((_, _))
+
+  def sequence[A](rs: List[Rand[A]]): Rand[List[A]] =
+    rs.foldRight(unit(List[A]()))((r, accum) => map2(r, accum)(_ :: _))
+
+  println(sequence(List.fill(3)(double))(SimpleRNG(1)))
+
+  def ints2(count:Int): Rand[List[Int]] = sequence(List.fill(count)(int))
+
+  println(ints(3)(rngs(0)))
+  println(ints2(3)(rngs(0)))
+
+  def flatMap[A,B](f: Rand[A])(g: A => Rand[B]): Rand[B] =
+    rng => {
+      val (a, r) = f(rng)
+      g(a)(r)
+    }
+
+  def nonNegativeLessThan(n: Int): Rand[Int] =
+    flatMap(nonNegativeInt){ i =>
+      val mod = i % n
+      if (i + (n-1) - mod >= 0) unit(mod) else nonNegativeLessThan(n)
+    }
+
+  results(nonNegativeLessThan(100))
+
+  def mapViaFlatMap[A,B](f: Rand[A])(g: A => B): Rand[B] =
+    flatMap(f)(a => unit(g(a)))
+
+  def map2ViaFlatMap[A,B,C](ra: Rand[A], rb: Rand[B])(f: (A,B) => C): Rand[C] =
+    flatMap(ra)(a => mapViaFlatMap(rb)(b => f(a, b)))
 
 }
