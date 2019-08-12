@@ -1,67 +1,89 @@
 import scala.language.implicitConversions
 import scala.language.higherKinds
 
+import scala.util.matching.Regex
 
 trait Parsers[ParseError, Parser[+ _]] { self =>
 
-  def char(c: Char): Parser[Char] // = string(c.toString).map(_.charAt(0))
-
-  implicit def string(s: String): Parser[String]
+  // Implicit conversions to parser ops
   implicit def operators[A](p: Parser[A]) = ParserOps[A](p)
   implicit def asStringParser[A](a: A)(
       implicit f: A => Parser[String]): ParserOps[String] =
     ParserOps(f(a))
   implicit def parser[A](o: ParserOps[A]): Parser[A] = o.p
 
-  def or[A](s1: Parser[A], s2: Parser[A]): Parser[A]
+  def char(c: Char): Parser[Char] = string(c.toString).map(_.charAt(0))
 
-  //  def and[A](s1: Parser[A], s2: Parser[A]): Parser[A]
+  implicit def string(s: String): Parser[String]
 
-  def listOfN[A](n: Int, p: Parser[A]): Parser[List[A]]
+  implicit def regex(r: Regex): Parser[String]
 
-  def map[A, B](p: Parser[A])(f: A => B): Parser[B]
+  def or[A](s1: Parser[A], s2: => Parser[A]): Parser[A]
+
+  def flatMap[A, B](p: Parser[A])(f: A => Parser[B]): Parser[B]
+
+  def map[A, B](p: Parser[A])(f: A => B): Parser[B] = p.flatMap(a => succeed(f(a)))
 
   def succeed[A](a: A): Parser[A] = string("").map(_ => a)
+
+  /**
+    * Return the complete string matched by p
+    */
+  def slice[A](p: Parser[A]): Parser[String]
 
   /**
     * Recognizes zero or more instances of `p`
     * run(count(2, "a")("b123")) == Right(0)
     * run(count(2, "a")("a1a3")) == Right(2)
     */
-  def many[A](p: Parser[A]): Parser[List[A]]
+  def many[A](p: Parser[A]): Parser[List[A]] =
+    map2(p, many(p))(_ :: _) | succeed(List())
+
+  /**
+    * Recognizes one or more of `p`
+    */
+  def many1[A](p: Parser[A]): Parser[List[A]] = map2(p, many(p))(_ :: _)
+
+  def listOfN[A](n: Int, p: Parser[A]): Parser[List[A]] =
+   map2(p, if (n > 0) listOfN(n - 1, p) else succeed(List()))(_ :: _)
+
+  def product[A, B](p1: Parser[A], p2: => Parser[B]): Parser[(A, B)] =
+    for {
+      a <- p1
+      b <- p2
+    } yield (a, b)
+
+  def map2[A, B, C](p1: Parser[A], p2: => Parser[B])(f: (A, B) => C): Parser[C] =
+    product(p1, p2) map f.tupled
 
   def count[A](p: Parser[A]): Parser[Int] = p.many.map(_.length)
-
-  // /**
-  //   * Recognizes one or more of `p`
-  //   */
-  // def atLeastOneOf[A](p: Parser[A]): Parser[Int]
 
   def run[A](p: Parser[A])(input: String): Either[ParseError, A]
 
   // Implicit class for creating infix operations
   case class ParserOps[A](p: Parser[A]) {
-    def |[B >: A](p2: Parser[B]): ParserOps[B] = self.or(p, p2)
-    def or[B >: A](p2: Parser[B]): ParserOps[B] = self.or(p, p2)
-
-    // def &[B>:A](p2: Parser[B]): ParserOps[B] = self.and(p, p2)
-    // def and[B>:A](p2: Parser[B]): ParserOps[B] = self.and(p, p2)
-
+    def |[B >: A](p2: => Parser[B]): ParserOps[B] = self.or(p, p2)
+    def or[B >: A](p2: => Parser[B]): ParserOps[B] = self.or(p, p2)
     def map[B](f: A => B): Parser[B] = self.map(p)(f)
-
+    def flatMap[B](f: A => Parser[B]): Parser[B] = self.flatMap(p)(f)
     def many: Parser[List[A]] = self.many(p)
+    def many1: Parser[List[A]] = self.many1(p)
+    def slice[A](p: Parser[A]): Parser[String] = self.slice(p)
+    def product[B](p2: => Parser[B]): Parser[(A, B)] = self.product(p, p2)
+    def **[B](p2: => Parser[B]): Parser[(A, B)] = self.product(p, p2)
   }
+
+
 }
 
 object ListHelper {
 
-  def unfold[A,S](z: S)(f: S => Option[(A, S)]): List[A] = {
+  def unfold[A, S](z: S)(f: S => Option[(A, S)]): List[A] = {
     f(z) match {
       case Some((a, s)) => a :: unfold(s)(f)
-      case _ => Nil
+      case _            => Nil
     }
   }
-
 
 }
 
@@ -97,14 +119,15 @@ object Parser {
             newState.copy(result = f(oldState.result, newState.result)))))
 
   def takeWhile[A](p: Parser[A]): Parser[List[A]] = input => {
-     val states = ListHelper.unfold(input)(input => p(input) match {
-      case Left(e) => None
-      case Right(state) => Some((state, state.nextInput))
-     })
+    val states = ListHelper.unfold(input)(input =>
+      p(input) match {
+        case Left(e)      => None
+        case Right(state) => Some((state, state.nextInput))
+    })
 
     states match {
-      case head :: tail => success( states.map(_.result).reverse, head.nextInput)
-      case _ => success(List.empty[A], input)
+      case head :: tail => success(states.map(_.result).reverse, head.nextInput)
+      case _            => success(List.empty[A], input)
     }
   }
 }
@@ -117,31 +140,23 @@ object ParsersImpl extends Parsers[ParseError, Parser] {
     p(input).map(_.result)
   }
 
-  def char(c: Char): Parser[Char] =
+  implicit def string(s: String): Parser[String] =
     input =>
-      input.headOption match {
-        case Some(h) if c == h => Right(ParseState(c, input.tail))
-        case _                 => Left(ParseError(s"$c not found"))
+      input.startsWith(s) match {
+        case true  => Right(ParseState(s, input.drop(s.length)))
+        case false => Left(ParseError(s))
     }
 
-  implicit def string(s: String): Parser[String] =
-    fold(s.toList.map(c => char(c)))("")(_ + _)
+//  def slice[A](p: Parser[A]): Parser[String] = ???
 
-  def map[A, B](p: Parser[A])(f: A => B): Parser[B] = map(p)(f)
+//  def product[A, B](p1: Parser[A], p2: => Parser[B]): Parser[(A, B)] = ???
 
-  def many[A](p: Parser[A]): Parser[List[A]] = ???
-
-  def or[A](p1: Parser[A], p2: Parser[A]): Parser[A] =
+  def or[A](p1: Parser[A], p2: => Parser[A]): Parser[A] =
     input =>
       p1(input) match {
         case Left(e) => p2(input)
         case r       => r
     }
-
-  def listOfN[A](n: Int, p: Parser[A]): Parser[List[A]] =
-    map(fold(List.fill(n)(p))(List.empty[A])((a, b) => b :: a))(_.reverse)
-
-//  def and[A](s1: Parser[A], s2: Parser[A]): Parser[A] = ???
 }
 
 object Main extends App {
@@ -157,7 +172,13 @@ object Main extends App {
   assertI(run(char('c'))("c"), Right('c'))
   assertI(run("ab12")("ab12"), Right("ab12"))
 //  assertI(run(listOfN(3, "ab"))("ababab"), Right(List("ab", "ab", "ab")))
-  assertI(run("c" | "b")("cb"), Right("c"))
-  assertI(run("c" | "b")("bc"), Right("b"))
+  // assertI(run("c" | "b")("cb"), Right("c"))
+  // assertI(run("c" | "b")("bc"), Right("b"))
   //  assertI(run(count("c"))("ccccb"), Right("cccc"))
+
+  val context = for {
+    n <- regex("[0-9]+".r).map(_.toInt)
+    _ <- listOfN(n, "a")
+  } yield ()
+
 }
