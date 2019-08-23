@@ -3,25 +3,21 @@ import scala.language.higherKinds
 
 import scala.util.matching.Regex
 
-trait ParseError { self =>
 
-  type Msg = String
+trait Parsers[Parser[+ _]] { self =>
 
-  def pure(m: Msg): ParseError
+   case class Location(input: String, offset: Int = 0) {
+     lazy val line = input.slice(0, offset +1).count(_ == '\n') + 1
+     lazy val col = input.slice(0, offset + 1).lastIndexOf('\n') match {
+       case -1 => offset + 1
+       case lineStart => offset - lineStart
+     }
+   }
 
-  def map(e: ParseError)(f: Msg => Msg): ParseError
+   def errrorLocation(e: ParseError): Location
+  def errorMessage(e: ParseError): String
 
-  def and(e1: ParseError, e2: ParseError): ParseError
-
-  implicit def operators(e: ParseError) = ParseErrorOps(e)
-  implicit def error[A](o: ParseErrorOps): ParseError = o.e
-
-  case class ParseErrorOps(e: ParseError) {
-    def map(f: Msg => Msg): ParseError = self.map(e)(f)
-  }
-}
-
-trait Parsers[ParseError, Parser[+ _]] { self =>
+case class ParseError(stack: List[(Location, String)])
 
   // Implicit conversions to parser ops
   implicit def operators[A](p: Parser[A]) = ParserOps[A](p)
@@ -30,15 +26,30 @@ trait Parsers[ParseError, Parser[+ _]] { self =>
     ParserOps(f(a))
   implicit def parser[A](o: ParserOps[A]): Parser[A] = o.p
 
-  def char(c: Char): Parser[Char] = string(c.toString).map(_.charAt(0))
-
   implicit def string(s: String): Parser[String]
 
   implicit def regex(r: Regex): Parser[String]
 
+  /**
+    * Return the complete string matched by p
+    */
+  def slice[A](p: Parser[A]): Parser[String]
+
   def or[A](s1: Parser[A], s2: => Parser[A]): Parser[A]
 
   def flatMap[A, B](p: Parser[A])(f: A => Parser[B]): Parser[B]
+
+  // Add a string to a parser
+  def label[A](msg: String)(p: Parser[A]): Parser[A]
+
+  // Nest multiple labels
+  def scope[A](msg: String)(p: Parser[A]): Parser[A]
+
+  def attempt[A](p: Parser[A]): Parser[A]
+
+  def run[A](p: Parser[A])(input: String): Either[ParseError, A]
+
+  def char(c: Char): Parser[Char] = string(c.toString).map(_.charAt(0))
 
   def map[A, B](p: Parser[A])(f: A => B): Parser[B] =
     for {
@@ -46,11 +57,6 @@ trait Parsers[ParseError, Parser[+ _]] { self =>
     } yield f(a)
 
   def succeed[A](a: A): Parser[A] = string("").map(_ => a)
-
-  /**
-    * Return the complete string matched by p
-    */
-  def slice[A](p: Parser[A]): Parser[String]
 
   /**
     * Recognizes zero or more instances of `p`
@@ -69,6 +75,8 @@ trait Parsers[ParseError, Parser[+ _]] { self =>
     map2(p, if (n > 0) listOfN(n - 1, p) else succeed(List()))(_ :: _)
 
   // TOOD: does this need to be nonstrict?
+
+  def anyOf[A](ps: List[Parser[A]]): Parser[A] = anyOf(ps.head, ps.tail: _*)
   def anyOf[A](p: Parser[A], ps: Parser[A]*): Parser[A] =
     ps.headOption match {
       case None     => p
@@ -87,9 +95,6 @@ trait Parsers[ParseError, Parser[+ _]] { self =>
 
   def count[A](p: Parser[A]): Parser[Int] = p.many.map(_.length)
 
-  def label[A](p: Parser[A])(label: String): Parser[A]
-
-  def run[A](p: Parser[A])(input: String): Either[ParseError, A]
 
   // Implicit class for creating infix operations
   case class ParserOps[A](p: Parser[A]) {
@@ -116,7 +121,7 @@ object JSON {
   case class JArray(get: IndexedSeq[JSON]) extends JSON
   case class JObject(get: Map[String, JSON]) extends JSON
 
-  def jsonParser[Err, Parser[+ _]](P: Parsers[Err, Parser]): Parser[JSON] = {
+  def jsonParser[Parser[+ _]](P: Parsers[Parser]): Parser[JSON] = {
     import P._
 
     val spaces = char(' ').many.slice
@@ -127,17 +132,25 @@ object JSON {
       _ <- char('"')
     } yield JString(value)
 
-    val escape = slice(
-      anyOf(List('"', '\\', '/', 'b', 'f', 'n', 'r', 't').map(char): _*) | char(
-        'u') ** listOfN(4, hex))
+    val digit = regex("[0-9]".r)
+    val onenine = regex("[1-9]".r)
+    val digits = many1(digit).slice
+
+    val fraction: Parser[Double] = ("" | ("." ** digits)).slice.map(_.toDouble)
+
+    val sign = (succeed("") | "+" | "-").map(s => if (s == "-") -1 else 1)
+
+    val exponent: Parser[Int] = (for {
+      e <- char('e') | char('E')
+      s <- sign
+      d <- digits.map(_.toInt)
+    } yield 10 ^ (s * d)) | succeed("").map(_ => 1)
 
     val hex = digit | regex("[A-Fa-f]".r)
 
-    val number: Parser[JNumber] = for {
-      i <- integer
-      f <- fraction
-      e <- exponent
-    } yield JNumber((i + f) * e)
+    val escape = slice(
+      anyOf(List('"', '\\', '/', 'b', 'f', 'n', 'r', 't').map(char)) | char(
+        'u') ** listOfN(4, hex))
 
     val integer: Parser[Int] = anyOf(
       digit,
@@ -146,19 +159,11 @@ object JSON {
       "-" ** onenine ** digits
     ).slice.map(_.toInt)
 
-    val digit = regex("[0-9]".r)
-    val onenine = regex("[1-9]".r)
-    val digits = many1(digit).slice
-
-    val fraction: Parser[Double] = ("" | ("." ** digits)).slice.map(_.toDouble)
-
-    val exponent: Parser[Int] = (for {
-      e <- char('e') | char('E')
-      s <- sign
-      d <- digits.map(_.toInt)
-    } yield 10 ^ (s * d)) | succeed("").map(_ => 1)
-
-    val sign = (succeed("") | "+" | "-").map(s => if (s == "-") -1 else 1)
+    val number: Parser[JNumber] = for {
+      i <- integer
+      f <- fraction
+      e <- exponent
+    } yield JNumber((i + f) * e)
 
     val whitespace = anyOf(
       char('\u0020'),
@@ -167,8 +172,10 @@ object JSON {
       char('\u0009'),
     ) | succeed("")
 
-  }
 
+    // TODO
+   number : Parser[JSON]
+  }
 }
 
 
