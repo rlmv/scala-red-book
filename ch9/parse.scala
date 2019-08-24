@@ -3,21 +3,110 @@ import scala.language.higherKinds
 
 import scala.util.matching.Regex
 
+import MyParser._
+
+
+sealed trait Result[+A]
+case class Success[+A](get: A, charsConsumed: Int) extends Result[A]
+case class Failure(get: ParseError) extends Result[Nothing]
+
+// run is a function that takes input, returns A and next chunk of input
+class MyParser[+A] (val run: Parser[A]) {}
+
+object MyParser extends Parsers[MyParser] {
+  type Parser[+A] = Location => Result[A]
+
+  def run[A](p: MyParser[A])(input: String): Either[ParseError, A] =
+    p.run(Location(input)) match {
+      case Success(get, _) => Right(get)
+      case Failure(get) => Left(get)
+    }
+
+  def succeed[A](a: A): MyParser[A]  = new MyParser(l =>
+    Success(a, 0)
+  )
+
+  implicit def string(s: String): MyParser[String] = new MyParser((l: Location) =>
+    if (l.remainder.startsWith(s)) Success(s, s.length)
+    else Failure(l.toError(s"Expected: $s"))
+  )
+
+  implicit def regex(r: Regex): MyParser[String] = new MyParser((l: Location) =>
+    r.findFirstIn(l.remainder) match {
+      case Some(s) => Success(s, s.length)
+      case None => Failure(l.toError(s"No match for: $r"))
+      }
+  )
+
+  def slice[A](p: MyParser[A]): MyParser[String] = new MyParser((l: Location) =>
+    p.run(l) match {
+      case Success(_, i) => Success(l.input.slice(l.offset, l.offset + i), i)
+      case Failure(get) => Failure(get)
+    })
+
+  def scope[A](msg: String)(p: MyParser[A]): MyParser[A] = ???
+  def attempt[A](p: MyParser[A]): MyParser[A] = ???
+
+  def errorMessage(e: MyParser.ParseError): String = ???
+  def errrorLocation(e: MyParser.ParseError): MyParser.Location = ???
+
+  // ????
+  def flatMap[A, B](p: MyParser[A])(f: A => MyParser[B]): MyParser[B] = new MyParser(l => {
+    p.run(l) match {
+      case Success(get, i) => {
+        println(get, l, i)
+        println(l.copy(offset=l.offset + i))
+        f(get).run(l.copy(offset=l.offset + i))
+      }
+      case Failure(get) => Failure(get)
+    }})
+
+  def label[A](msg: String)(p: MyParser[A]): MyParser[A] = ???
+
+  def or[A](p1: MyParser[A], p2: => MyParser[A]): MyParser[A] = new MyParser(l =>
+    // TODO backtrack / pick error message
+    p1.run(l) match {
+      case Failure(get) => p2.run(l)
+      case success => success
+    }
+  )
+
+  //   if (l.input.startsWith(s)) Right((s, l.input.slice(s.length, l.input.length)))
+  //   else {
+  //     val i = l.input.zip(s).zipWithIndex.collectFirst {
+  //       case ((x, y), i) if x != y => i
+  //     } match {
+  //       case Some(i) => i
+  //       case None => if (s.length > l.input.length) l.input.length + 1 else s.length + 1
+  //     }
+  //     Left(Location(l.input, i).toError("cannot match string"))
+  //   }
+  // )
+
+
+}
 
 trait Parsers[Parser[+ _]] { self =>
 
-   case class Location(input: String, offset: Int = 0) {
+  case class Location(input: String, offset: Int = 0) {
      lazy val line = input.slice(0, offset +1).count(_ == '\n') + 1
      lazy val col = input.slice(0, offset + 1).lastIndexOf('\n') match {
        case -1 => offset + 1
        case lineStart => offset - lineStart
      }
+
+    def toError(msg: String): ParseError = ParseError(
+      List((this, msg))
+    )
+
+    def remainder: String = input.slice(offset, input.length)
    }
 
-   def errrorLocation(e: ParseError): Location
+  def errrorLocation(e: ParseError): Location
   def errorMessage(e: ParseError): String
 
-case class ParseError(stack: List[(Location, String)])
+  case class ParseError(stack: List[(Location, String)])
+
 
   // Implicit conversions to parser ops
   implicit def operators[A](p: Parser[A]) = ParserOps[A](p)
@@ -27,6 +116,7 @@ case class ParseError(stack: List[(Location, String)])
   implicit def parser[A](o: ParserOps[A]): Parser[A] = o.p
 
   implicit def string(s: String): Parser[String]
+
 
   implicit def regex(r: Regex): Parser[String]
 
@@ -52,11 +142,9 @@ case class ParseError(stack: List[(Location, String)])
   def char(c: Char): Parser[Char] = string(c.toString).map(_.charAt(0))
 
   def map[A, B](p: Parser[A])(f: A => B): Parser[B] =
-    for {
-      a <- p
-    } yield f(a)
+    p.flatMap(a => succeed(f(a)))
 
-  def succeed[A](a: A): Parser[A] = string("").map(_ => a)
+  def succeed[A](a: A): Parser[A]
 
   /**
     * Recognizes zero or more instances of `p`
@@ -72,7 +160,8 @@ case class ParseError(stack: List[(Location, String)])
   def many1[A](p: Parser[A]): Parser[List[A]] = map2(p, many(p))(_ :: _)
 
   def listOfN[A](n: Int, p: Parser[A]): Parser[List[A]] =
-    map2(p, if (n > 0) listOfN(n - 1, p) else succeed(List()))(_ :: _)
+    if (n <= 0) succeed(List())
+    else map2(p, listOfN(n - 1, p))(_ :: _)
 
   // TOOD: does this need to be nonstrict?
 
@@ -94,7 +183,6 @@ case class ParseError(stack: List[(Location, String)])
     product(p1, p2) map f.tupled
 
   def count[A](p: Parser[A]): Parser[Int] = p.many.map(_.length)
-
 
   // Implicit class for creating infix operations
   case class ParserOps[A](p: Parser[A]) {
@@ -172,7 +260,6 @@ object JSON {
       char('\u0009'),
     ) | succeed("")
 
-
     // TODO
    number : Parser[JSON]
   }
@@ -181,106 +268,26 @@ object JSON {
 
 object Main extends App {
 
-//   import ParsersImpl._
+  import MyParser._
 
-//   def assertI[A](s1: A, s2: A) =
-//     if (s1 != s2) {
-//       println(s"$s1 not equal to $s2")
-//       assert(s1 == s2)
-//     } else assert(s1 == s2)
+  def assertI[A](s1: A, s2: A) =
+    if (s1 != s2) {
+      println(s"$s1 not equal to $s2")
+      assert(s1 == s2)
+    } else assert(s1 == s2)
 
-//   assertI(run(char('c'))("c"), Right('c'))
-//   assertI(run("ab12")("ab12"), Right("ab12"))
-// //  assertI(run(listOfN(3, "ab"))("ababab"), Right(List("ab", "ab", "ab")))
-//   // assertI(run("c" | "b")("cb"), Right("c"))
-//   // assertI(run("c" | "b")("bc"), Right("b"))
-//   //  assertI(run(count("c"))("ccccb"), Right("cccc"))
+  assertI(run(char('c'))("c"), Right('c'))
+  assertI(run("ab12")("ab12"), Right("ab12"))
+  assertI(run(listOfN(3, "ab"))("abababab"), Right(List("ab", "ab", "ab")))
+  assertI(run("c" | "b")("cb"), Right("c"))
+  assertI(run("c" | "b")("bc"), Right("b"))
+  assertI(run(count("c"))("ccccb"), Right(4))
 
-//   val context = for {
-//     n <- regex("[0-9]+".r).map(_.toInt)
-//     _ <- listOfN(n, "a")
-//   } yield ()
+  val context = for {
+    n <- regex("[0-9]+".r).map(_.toInt)
+    _ <- listOfN(n, "a")
+  } yield ()
+
+  assertI(run(context)("3aaa"), Right("3aaa"))
 
 }
-
-// object ListHelper {
-
-//   def unfold[A, S](z: S)(f: S => Option[(A, S)]): List[A] = {
-//     f(z) match {
-//       case Some((a, s)) => a :: unfold(s)(f)
-//       case _            => Nil
-//     }
-//   }
-
-// }
-
-//import Parser._
-
-// object ParsersImpl extends Parsers[ParseError, Parser] {
-
-//   def run[A](p: Parser[A])(input: String): Either[ParseError, A] = {
-//     p(input).map(_.result)
-//   }
-
-//   implicit def string(s: String): Parser[String] =
-//     input =>
-//       input.startsWith(s) match {
-//         case true  => Right(ParseState(s, input.drop(s.length)))
-//         case false => Left(ParseError(s))
-//     }
-
-// //  def slice[A](p: Parser[A]): Parser[String] = ???
-
-//   def or[A](p1: Parser[A], p2: => Parser[A]): Parser[A] =
-//     input =>
-//       p1(input) match {
-//         case Left(e) => p2(input)
-//         case r       => r
-//     }
-// }
-
-
-/**
-  * Implementation
-  */
-// case class ParseError(msg: String)
-
-// case class ParseState[+A](result: A, nextInput: String) {}
-
-// object Parser {
-
-//   type ParseResult[+A] = Either[ParseError, ParseState[A]]
-//   type Parser[+A] = String => ParseResult[A]
-
-//   def success[A](result: A, nextInput: String): ParseResult[A] =
-//     Right(ParseState(result, nextInput))
-
-//   def pure[A](result: A): Parser[A] = success(result, _)
-
-//   def map[A, B](p: Parser[A])(f: A => B): Parser[B] =
-//     input => p(input).map(state => state.copy(result = f(state.result)))
-
-//   def flatMap[A, B](p: Parser[A])(f: A => Parser[B]): Parser[B] =
-//     input => p(input).flatMap(state => f(state.result)(state.nextInput))
-
-//   // Combine a list of parsers, producing a new parser
-//   def fold[A, B](ps: List[Parser[A]])(base: B)(f: (B, A) => B): Parser[B] =
-//     input =>
-//       ps.foldLeft[ParseResult[B]](Right(ParseState(base, input)))((accum, p) =>
-//         accum.flatMap(oldState =>
-//           p(oldState.nextInput).map(newState =>
-//             newState.copy(result = f(oldState.result, newState.result)))))
-
-//   def takeWhile[A](p: Parser[A]): Parser[List[A]] = input => {
-//     val states = ListHelper.unfold(input)(input =>
-//       p(input) match {
-//         case Left(e)      => None
-//         case Right(state) => Some((state, state.nextInput))
-//     })
-
-//     states match {
-//       case head :: tail => success(states.map(_.result).reverse, head.nextInput)
-//       case _            => success(List.empty[A], input)
-//     }
-//   }
-// }
