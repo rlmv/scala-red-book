@@ -1,6 +1,7 @@
 import scala.language.implicitConversions
 import scala.language.higherKinds
 
+import scala.math.pow
 import scala.util.matching.Regex
 
 import ParserTypes._
@@ -59,10 +60,14 @@ object Parser extends Parsers[Parser] {
     }
 
   def slice[A](p: Parser[A]): Parser[String] =
-    (l: Location) =>
+    (l: Location) => {
+println(l)
       p(l) match {
         case Success(_, i)     => Success(l.input.slice(l.offset, l.offset + i), i)
         case e @ Failure(_, _) => e
+
+
+      }
     }
 
   def attempt[A](p: Parser[A]): Parser[A] = (l: Location) => p(l).uncommit
@@ -175,7 +180,7 @@ trait Parsers[Parser[+ _]] { self =>
     * run(count(2, "a")("a1a3")) == Right(2)
     */
   def many[A](p: Parser[A]): Parser[List[A]] =
-    map2(p, many(p))(_ :: _) | succeed(List())
+    attempt(map2(p, many(p))(_ :: _)) | succeed(List())
 
   /**
     * Recognizes one or more of `p`
@@ -192,7 +197,7 @@ trait Parsers[Parser[+ _]] { self =>
   def anyOf[A](p: Parser[A], ps: Parser[A]*): Parser[A] =
     ps.headOption match {
       case None     => p
-      case Some(p2) => anyOf(p2, ps.tail: _*)
+      case Some(p2) => attempt(p) | anyOf(p2, ps.tail: _*)
     }
 
   def product[A, B](p1: Parser[A], p2: => Parser[B]): Parser[(A, B)] =
@@ -222,6 +227,7 @@ trait Parsers[Parser[+ _]] { self =>
 
 }
 
+
 trait JSON
 object JSON {
   case object JNull extends JSON
@@ -231,58 +237,65 @@ object JSON {
   case class JArray(get: IndexedSeq[JSON]) extends JSON
   case class JObject(get: Map[String, JSON]) extends JSON
 
-  def jsonParser[Parser[+ _]](P: Parsers[Parser]): Parser[JSON] = {
-    import P._
+  import Parser._
 
+  def jsonParser: Parser[JSON] = {
     val spaces = char(' ').many.slice
-
-    val jstring: Parser[JString] = for {
-      _ <- char('"')
-      value <- regex("""[^"]*""".r) // TODO exclude other escapes (/)
-      _ <- char('"')
-    } yield JString(value)
 
     val digit = regex("[0-9]".r)
     val onenine = regex("[1-9]".r)
-    val digits = many1(digit).slice
-
-    val fraction: Parser[Double] = ("" | ("." ** digits)).slice.map(_.toDouble)
-
-    val sign = (succeed("") | "+" | "-").map(s => if (s == "-") -1 else 1)
-
-    val exponent: Parser[Int] = (for {
-      e <- char('e') | char('E')
-      s <- sign
-      d <- digits.map(_.toInt)
-    } yield 10 ^ (s * d)) | succeed("").map(_ => 1)
+    val digits = many(digit)
 
     val hex = digit | regex("[A-Fa-f]".r)
 
-    val escape = slice(anyOf(List('"', '\\', '/', 'b', 'f', 'n', 'r',
-      't').map(char)) | char('u') ** listOfN(4, hex))
+    val number: Parser[JNumber] = regex("[-+]?([0-9]*\\.)?[0-9]+([eE][-+]?[0-9]+)?".r).slice.map(s => JNumber(s.toDouble))
 
-    val integer: Parser[Int] = anyOf(
-      digit,
-      onenine ** digits,
-      "-" ** digit,
-      "-" ** onenine ** digits
-    ).slice.map(_.toInt)
-
-    val number: Parser[JNumber] = for {
-      i <- integer
-      f <- fraction
-      e <- exponent
-    } yield JNumber((i + f) * e)
-
-    val whitespace = anyOf(
+    val whitespace = attempt(anyOf(
       char('\u0020'),
       char('\u000D'),
       char('\u000A'),
       char('\u0009'),
-    ) | succeed("")
+    )) | succeed("")
 
-    // TODO
-    number: Parser[JSON]
+    val escape = slice(anyOf(List('"', '\\', '/', 'b', 'f', 'n', 'r',
+      't').map(char)) | char('u') ** listOfN(4, hex))
+
+    // TODO exclude other invalid characters
+    val character = regex("""[^"\\]""".r) | (char('\\') **  escape )
+
+    def characters: Parser[Any] = (character ** characters) | succeed("")
+
+    val jstring: Parser[JString] = for {
+      _ <- char('"')
+      c <- characters.slice
+      _ <- char('"')
+    } yield JString(c)
+
+    val jtrue: Parser[JBool] = string("true").map(_ => JBool(true))
+    val jfalse: Parser[JBool] = string("false").map(_ => JBool(false))
+    val jnull: Parser[JNull.type] = string("null").map( _ => JNull)
+
+    def value: Parser[JSON] = anyOf(array, jstring, number, jtrue, jfalse, jnull) // TODO object, array
+
+    def element: Parser[JSON] = for {
+      _ <- whitespace
+      v <- value
+      _ <- whitespace
+      } yield v
+
+    def elements: Parser[List[JSON]] = attempt(element).map(
+      List(_)) | (element ** char(',') ** elements).map {
+       case ((e, _), l) => e :: l
+      }
+
+    def array: Parser[JArray] =
+      attempt((char('[') ** whitespace ** char(']')).map(_ => JArray(Nil.to[IndexedSeq]))) | (for {
+          _ <- char('[')
+          e <- elements
+          _ <- char(']')
+        } yield JArray(e.to[IndexedSeq]))
+
+    element: Parser[JSON]
   }
 }
 
@@ -314,4 +327,21 @@ object Main extends App {
 
   assertI(run(context.slice)("3aaaaaa"), Right("3aaa"))
 
+  import JSON._
+
+  assertI(run(jsonParser)("\"string\""), Right(JString("string")))
+  assertI(run(jsonParser)("\"\""), Right(JString("")))
+  assertI(run(jsonParser)("1.0"), Right(JNumber(1.0)))
+  assertI(run(jsonParser)("1"), Right(JNumber(1)))
+  assertI(run(jsonParser)("12"), Right(JNumber(12)))
+  assertI(run(jsonParser)("10"), Right(JNumber(10)))
+  assertI(run(jsonParser)("0.2"), Right(JNumber(0.2)))
+  assertI(run(jsonParser)("1.2"), Right(JNumber(1.2)))
+  assertI(run(jsonParser)("true"), Right(JBool(true)))
+  assertI(run(jsonParser)("false"), Right(JBool(false)))
+  assertI(run(jsonParser)("null"), Right(JNull))
+
+  assertI(run(jsonParser)("[ ]"), Right(JArray(IndexedSeq.empty)))
+  assertI(run(jsonParser)("[ 4, true]"), Right(JArray(IndexedSeq(JNumber(4), JBool(true)))))
+//  assertI(run(jsonParser)("1.2"), Right(JNumber(1.2)))
 }
