@@ -22,9 +22,10 @@ object Par {
     }
 
   def fork[A](a: => Par[A]): Par[A] =
-    es => es.submit(new Callable[A] {
-      def call = a(es).get
-    })
+    es =>
+      es.submit(new Callable[A] {
+        def call = a(es).get
+      })
 
   def delay[A](a: => Par[A]): Par[A] =
     es => a(es)
@@ -33,16 +34,16 @@ object Par {
 
   def run[A](s: ExecutorService)(a: Par[A]): Future[A] = a(s)
 
-  def asyncF[A,B](f: A => B): A => Par[B] =
+  def asyncF[A, B](f: A => B): A => Par[B] =
     a => lazyUnit(f(a))
 
-  def map[A,B](pa: Par[A])(f: A => B): Par[B] =
+  def map[A, B](pa: Par[A])(f: A => B): Par[B] =
     map2(pa, unit(()))((a, _) => f(a))
 
   def sequence[A](ps: List[Par[A]]): Par[List[A]] =
     ps.foldRight(unit(Nil: List[A]))((a, accum) => map2(a, accum)(_ :: _))
 
-  def parMap[A,B](as: List[A])(f: A => B): Par[List[B]] = fork {
+  def parMap[A, B](as: List[A])(f: A => B): Par[List[B]] = fork {
     val pbs: List[Par[B]] = as.map(asyncF(f))
     sequence(pbs)
   }
@@ -56,18 +57,18 @@ object Par {
     if (as.size <= 1)
       unit(as.headOption match {
         case Some(a) => f(base, a)
-        case None => base
+        case None    => base
       })
-      else {
-        val (l, r) = as.splitAt(as.length / 2)
-        map2(parFold(l)(base)(f), parFold(r)(base)(f))(f)
-      }
+    else {
+      val (l, r) = as.splitAt(as.length / 2)
+      map2(parFold(l)(base)(f), parFold(r)(base)(f))(f)
+    }
   }
   // def parTraverse[A](as: List[A])(f
   // def countWords(paragraphs: List[String]): Par[Int] = {
   //  }
 
-  def flatMap[A,B](a: Par[A])(f: A => Par[B]): Par[B] =
+  def flatMap[A, B](a: Par[A])(f: A => Par[B]): Par[B] =
     join(map(a)(f))
 //    es => f(a(es).get)(es)
 
@@ -94,7 +95,7 @@ object Main extends App {
     if (ints.size <= 1)
       unit(ints.headOption.getOrElse(0))
     else {
-      val (l, r) = ints.splitAt(ints.length/2)
+      val (l, r) = ints.splitAt(ints.length / 2)
       map2(sumV1(l), sumV1(r))(_ + _)
     }
   }
@@ -109,7 +110,6 @@ object Main extends App {
     val pCounts = parMap(paragraphs)(p => p.split("\\s+").length)
     map(pCounts)(_.sum)
   }
-
 
   def getR[A](p: Par[A]): Unit = println(run(executor)(p).get())
 

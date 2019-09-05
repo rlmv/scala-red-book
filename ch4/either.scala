@@ -1,19 +1,19 @@
 sealed trait Either[+E, +A] {
   def map[B](f: A => B): Either[E, B] =
     this match {
-      case Left(e) => Left(e)
+      case Left(e)  => Left(e)
       case Right(a) => Right(f(a))
     }
 
   def flatMap[EE >: E, B](f: A => Either[EE, B]): Either[EE, B] =
     this match {
-      case Left(e) => Left(e)
+      case Left(e)  => Left(e)
       case Right(a) => f(a)
     }
 
   def orElse[EE >: E, B >: A](b: => Either[EE, B]): Either[EE, B] =
     this match {
-      case Left(e) => b
+      case Left(e)  => b
       case Right(a) => Right(a)
     }
 
@@ -23,11 +23,9 @@ sealed trait Either[+E, +A] {
       bb <- b
     } yield f(aa, bb)
 
-
 }
 case class Left[+E](value: E) extends Either[E, Nothing]
 case class Right[+A](value: A) extends Either[Nothing, A]
-
 
 object Tests extends App {
 
@@ -65,10 +63,11 @@ object Tests extends App {
   assert(eOne.map2(Right(2))(_ + _) == Right(3))
 
   def traverse[E, A, B](as: List[A])(f: A => Either[E, B]): Either[E, List[B]] =
-    as.foldRight[Either[E, List[B]]](Right(List()))((a, accum) => for {
-      bb <- accum
-      b <- f(a)
-    } yield b :: bb)
+    as.foldRight[Either[E, List[B]]](Right(List()))((a, accum) =>
+      for {
+        bb <- accum
+        b <- f(a)
+      } yield b :: bb)
 
   def sequence[E, A](as: List[Either[E, A]]): Either[E, List[A]] =
     traverse(as)(a => a)

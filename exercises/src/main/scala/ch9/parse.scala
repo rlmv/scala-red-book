@@ -1,3 +1,5 @@
+package fpinscala.ch9.parse
+
 import scala.language.implicitConversions
 import scala.language.higherKinds
 
@@ -61,11 +63,10 @@ object Parser extends Parsers[Parser] {
 
   def slice[A](p: Parser[A]): Parser[String] =
     (l: Location) => {
-println(l)
+      println(l)
       p(l) match {
         case Success(_, i)     => Success(l.input.slice(l.offset, l.offset + i), i)
         case e @ Failure(_, _) => e
-
 
       }
     }
@@ -227,7 +228,6 @@ trait Parsers[Parser[+ _]] { self =>
 
 }
 
-
 trait JSON
 object JSON {
   case object JNull extends JSON
@@ -248,20 +248,23 @@ object JSON {
 
     val hex = digit | regex("[A-Fa-f]".r)
 
-    val number: Parser[JNumber] = regex("[-+]?([0-9]*\\.)?[0-9]+([eE][-+]?[0-9]+)?".r).slice.map(s => JNumber(s.toDouble))
+    val number: Parser[JNumber] =
+      regex("[-+]?([0-9]*\\.)?[0-9]+([eE][-+]?[0-9]+)?".r).slice.map(s =>
+        JNumber(s.toDouble))
 
-    val whitespace = attempt(anyOf(
-      char('\u0020'),
-      char('\u000D'),
-      char('\u000A'),
-      char('\u0009'),
-    )) | succeed("")
+    val whitespace = attempt(
+      anyOf(
+        char('\u0020'),
+        char('\u000D'),
+        char('\u000A'),
+        char('\u0009'),
+      )) | succeed("")
 
     val escape = slice(anyOf(List('"', '\\', '/', 'b', 'f', 'n', 'r',
       't').map(char)) | char('u') ** listOfN(4, hex))
 
     // TODO exclude other invalid characters
-    val character = regex("""[^"\\]""".r) | (char('\\') **  escape )
+    val character = regex("""[^"\\]""".r) | (char('\\') ** escape)
 
     def characters: Parser[Any] = (character ** characters) | succeed("")
 
@@ -273,27 +276,30 @@ object JSON {
 
     val jtrue: Parser[JBool] = string("true").map(_ => JBool(true))
     val jfalse: Parser[JBool] = string("false").map(_ => JBool(false))
-    val jnull: Parser[JNull.type] = string("null").map( _ => JNull)
+    val jnull: Parser[JNull.type] = string("null").map(_ => JNull)
 
-    def value: Parser[JSON] = anyOf(array, jstring, number, jtrue, jfalse, jnull) // TODO object, array
+    def value: Parser[JSON] =
+      anyOf(array, jstring, number, jtrue, jfalse, jnull) // TODO object, array
 
-    def element: Parser[JSON] = for {
-      _ <- whitespace
-      v <- value
-      _ <- whitespace
+    def element: Parser[JSON] =
+      for {
+        _ <- whitespace
+        v <- value
+        _ <- whitespace
       } yield v
 
-    def elements: Parser[List[JSON]] = attempt(element).map(
-      List(_)) | (element ** char(',') ** elements).map {
-       case ((e, _), l) => e :: l
+    def elements: Parser[List[JSON]] =
+      attempt(element).map(List(_)) | (element ** char(',') ** elements).map {
+        case ((e, _), l) => e :: l
       }
 
     def array: Parser[JArray] =
-      attempt((char('[') ** whitespace ** char(']')).map(_ => JArray(Nil.to[IndexedSeq]))) | (for {
-          _ <- char('[')
-          e <- elements
-          _ <- char(']')
-        } yield JArray(e.to[IndexedSeq]))
+      attempt((char('[') ** whitespace ** char(']')).map(_ =>
+        JArray(Nil.to[IndexedSeq]))) | (for {
+        _ <- char('[')
+        e <- elements
+        _ <- char(']')
+      } yield JArray(e.to[IndexedSeq]))
 
     element: Parser[JSON]
   }
@@ -342,6 +348,7 @@ object Main extends App {
   assertI(run(jsonParser)("null"), Right(JNull))
 
   assertI(run(jsonParser)("[ ]"), Right(JArray(IndexedSeq.empty)))
-  assertI(run(jsonParser)("[ 4, true]"), Right(JArray(IndexedSeq(JNumber(4), JBool(true)))))
+  assertI(run(jsonParser)("[ 4, true]"),
+          Right(JArray(IndexedSeq(JNumber(4), JBool(true)))))
 //  assertI(run(jsonParser)("1.2"), Right(JNumber(1.2)))
 }
