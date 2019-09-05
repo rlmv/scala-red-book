@@ -2,6 +2,7 @@ package fpinscala.ch11.monad
 
 import scala.language.higherKinds
 import fpinscala.ch9.parse._
+import fpinscala.ch6.state._
 
 trait Functor[F[_]] {
 
@@ -16,7 +17,7 @@ trait Functor[F[_]] {
 
 trait Monad[F[_]] extends Functor[F] {
 
-  def unit[A](a: A): F[A]
+  def unit[A](a: => A): F[A]
   def flatMap[A, B](fa: F[A])(f: A => F[B]): F[B]
 
   def map[A, B](fa: F[A])(f: A => B): F[B] = flatMap(fa)(a => unit(f(a)))
@@ -66,7 +67,7 @@ trait Monad[F[_]] extends Functor[F] {
 
 object OptionMonad extends Monad[Option] {
 
-  def unit[A](a: A) = Some(a)
+  def unit[A](a: => A) = Some(a)
 
   def flatMap[A, B](fa: Option[A])(f: A => Option[B]): Option[B] = fa match {
     case Some(a) => f(a)
@@ -75,10 +76,52 @@ object OptionMonad extends Monad[Option] {
 }
 
 object ListMonad extends Monad[List] {
-  def unit[A](a: A): List[A] = List(a)
+  def unit[A](a: =>  A): List[A] = List(a)
   def flatMap[A, B](fa: List[A])(f: A => List[B]): List[B] = fa.flatMap(f)
+}
+
+
+case class Id[A](value: A) {
+  def map[B](f: A => B): Id[B] = Id(f(value))
+
+  def flatMap[B](f: A => Id[B]): Id[B] = f(value)
+}
+
+object IdMonad extends Monad[Id] {
+  def unit[A](a: => A) = Id(a)
+  def flatMap[A, B](fa: Id[A])(f: A => Id[B]): Id[B] = fa.flatMap(f)
+}
+
+case class Reader[R, A](run : R => A) {
+
+  def flatMap[B](f: A => Reader[R, B]): Reader[R, B] =
+    Reader(r => f(run(r)).run(r))
+
+  def map[B](f: A => B): Reader[R, B] =
+    Reader(r => f(run(r)))
+}
+
+object Reader {
+  def readerMonad[R] = new Monad[({type f[x] = Reader[R, x]})#f] {
+    def unit[A](a: => A): Reader[R, A] = Reader(_ => a)
+    def flatMap[A, B](st: Reader[R, A])(f: A => Reader[R, B]): Reader[R, B] =
+      st.flatMap(f)
+  }
 }
 
 object Main extends App {
   println("hi")
+
+  for {
+    a <- Id("Hello")
+    b <- Id("World")
+  } yield a + b
+
+  val intReader = Reader.readerMonad[Int]
+
+  val program = for {
+    r <- Reader[Int, String](i => i.toString)
+  } yield (r, s"first: $r")
+
+  println(program.run(5))
 }

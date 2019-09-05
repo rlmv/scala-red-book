@@ -1,3 +1,5 @@
+package fpinscala.ch6.state
+
 case class State[S, +A](run: S => (A, S)) {
 
   def flatMap[B](g: A => State[S, B]): State[S, B] =
@@ -11,7 +13,6 @@ case class State[S, +A](run: S => (A, S)) {
 
   def map[B, C](rb: State[S, B])(f: (A, B) => C): State[S, C] =
     flatMap(a => rb.map(b => f(a, b)))
-
 }
 
 object State {
