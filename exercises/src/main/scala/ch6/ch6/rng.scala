@@ -6,7 +6,7 @@ trait RNG {
 
 case class SimpleRNG(seed: Long) extends RNG {
   def nextInt: (Int, RNG) = {
-    val newSeed = (seed * 0x5DEECE66DL + 0xBL) & 0xFFFFFFFFFFFFL
+    val newSeed = (seed * 0X5DEECE66DL + 0XBL) & 0XFFFFFFFFFFFFL
     val nextRNG = SimpleRNG(newSeed)
     val n = (newSeed >>> 16).toInt
     (n, nextRNG)
@@ -120,7 +120,8 @@ object RNG extends App {
     flatMap(f)(a => unit(g(a)))
 
   def map2ViaFlatMap[A, B, C](ra: Rand[A], rb: Rand[B])(
-      f: (A, B) => C): Rand[C] =
+      f: (A, B) => C
+  ): Rand[C] =
     flatMap(ra)(a => mapViaFlatMap(rb)(b => f(a, b)))
 
 }

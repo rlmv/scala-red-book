@@ -59,7 +59,7 @@ object Parser extends Parsers[Parser] {
       r.findFirstIn(l.remainder) match {
         case Some(s) => Success(s, s.length)
         case None    => Failure(l.toError(s"No match for: $r"))
-    }
+      }
 
   def slice[A](p: Parser[A]): Parser[String] =
     (l: Location) => {
@@ -98,7 +98,7 @@ object Parser extends Parsers[Parser] {
       p1(l) match {
         case Failure(_, false) => p2(l)
         case r                 => r
-    }
+      }
 }
 
 case class Location(input: String, offset: Int = 0) {
@@ -140,8 +140,9 @@ trait Parsers[Parser[+ _]] { self =>
 
   // Implicit conversions to parser ops
   implicit def operators[A](p: Parser[A]) = ParserOps[A](p)
-  implicit def asStringParser[A](a: A)(
-      implicit f: A => Parser[String]): ParserOps[String] =
+  implicit def asStringParser[A](
+      a: A
+  )(implicit f: A => Parser[String]): ParserOps[String] =
     ParserOps(f(a))
   implicit def parser[A](o: ParserOps[A]): Parser[A] = o.p
 
@@ -208,7 +209,8 @@ trait Parsers[Parser[+ _]] { self =>
     } yield (a, b)
 
   def map2[A, B, C](p1: Parser[A], p2: => Parser[B])(
-      f: (A, B) => C): Parser[C] =
+      f: (A, B) => C
+  ): Parser[C] =
     product(p1, p2) map f.tupled
 
   def count[A](p: Parser[A]): Parser[Int] = p.many.map(_.length)
@@ -249,19 +251,24 @@ object JSON {
     val hex = digit | regex("[A-Fa-f]".r)
 
     val number: Parser[JNumber] =
-      regex("[-+]?([0-9]*\\.)?[0-9]+([eE][-+]?[0-9]+)?".r).slice.map(s =>
-        JNumber(s.toDouble))
+      regex("[-+]?([0-9]*\\.)?[0-9]+([eE][-+]?[0-9]+)?".r).slice
+        .map(s => JNumber(s.toDouble))
 
     val whitespace = attempt(
       anyOf(
         char('\u0020'),
         char('\u000D'),
         char('\u000A'),
-        char('\u0009'),
-      )) | succeed("")
+        char('\u0009')
+      )
+    ) | succeed("")
 
-    val escape = slice(anyOf(List('"', '\\', '/', 'b', 'f', 'n', 'r',
-      't').map(char)) | char('u') ** listOfN(4, hex))
+    val escape = slice(
+      anyOf(List('"', '\\', '/', 'b', 'f', 'n', 'r', 't').map(char)) | char('u') ** listOfN(
+        4,
+        hex
+      )
+    )
 
     // TODO exclude other invalid characters
     val character = regex("""[^"\\]""".r) | (char('\\') ** escape)
@@ -294,8 +301,10 @@ object JSON {
       }
 
     def array: Parser[JArray] =
-      attempt((char('[') ** whitespace ** char(']')).map(_ =>
-        JArray(Nil.to[IndexedSeq]))) | (for {
+      attempt(
+        (char('[') ** whitespace ** char(']'))
+          .map(_ => JArray(Nil.to[IndexedSeq]))
+      ) | (for {
         _ <- char('[')
         e <- elements
         _ <- char(']')
@@ -348,7 +357,9 @@ object Main extends App {
   assertI(run(jsonParser)("null"), Right(JNull))
 
   assertI(run(jsonParser)("[ ]"), Right(JArray(IndexedSeq.empty)))
-  assertI(run(jsonParser)("[ 4, true]"),
-          Right(JArray(IndexedSeq(JNumber(4), JBool(true)))))
+  assertI(
+    run(jsonParser)("[ 4, true]"),
+    Right(JArray(IndexedSeq(JNumber(4), JBool(true))))
+  )
 //  assertI(run(jsonParser)("1.2"), Right(JNumber(1.2)))
 }

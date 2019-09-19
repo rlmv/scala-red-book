@@ -1,3 +1,5 @@
+package fpinscala.ch10.monoid
+
 import scala.math
 import scala.math.max
 import scala.language.higherKinds
@@ -5,6 +7,21 @@ import scala.language.higherKinds
 trait Monoid[A] {
   def op(a1: A, a2: A): A
   val zero: A
+}
+
+trait Foldable[F[_]] {
+  def foldRight[A, B](as: F[A])(z: B)(f: (A, B) => B): B =
+    foldMap(as)(f.curried)(Instances.endoMonoid[B])(z)
+
+  def foldLeft[A, B](as: F[A])(z: B)(f: (B, A) => B): B =
+    foldMap(as)(a => b => f(b, a))(Instances.dual(Instances.endoMonoid[B]))(z)
+
+  def foldMap[A, B](as: F[A])(f: A => B)(mb: Monoid[B]): B =
+    foldLeft(as)(mb.zero)((b, a) => mb.op(b, f(a)))
+
+  def concatenate[A](as: F[A])(m: Monoid[A]): A = foldLeft(as)(m.zero)(m.op)
+
+  def toList[A](as: F[A]): List[A] = foldRight(as)(List.empty[A])(_ :: _)
 }
 
 object Instances {
@@ -39,6 +56,11 @@ object Instances {
     val zero: A => A = a => a
   }
 
+  def dual[A](m: Monoid[A]): Monoid[A] = new Monoid[A] {
+    def op(x: A, y: A): A = m.op(y, x)
+    val zero = m.zero
+  }
+
   def concatenate[A](l: List[A], m: Monoid[A]): A =
     l.foldLeft(m.zero)(m.op)
 
@@ -69,8 +91,10 @@ object Instances {
         case (a, Empty)     => a
         case (Empty, b)     => b
         case (a @ Concrete(_, _), b @ Concrete(_, _)) =>
-          Concrete(max(a.max, b.max),
-                   a.isOrdered && b.isOrdered && a.max <= b.max)
+          Concrete(
+            max(a.max, b.max),
+            a.isOrdered && b.isOrdered && a.max <= b.max
+          )
       }
     }
     foldMapV(ns, orderMonoid)(Concrete(_)) match {
@@ -109,21 +133,11 @@ object Instances {
       case Part(ls, wc, rs) => wordCount(ls) + wc + wordCount(rs)
     }
 
-  trait Foldable[F[_]] {
-    def foldRight[A, B](as: F[A])(z: B)(f: (A, B) => B): B
-    def foldLeft[A, B](as: F[A])(z: B)(f: (B, A) => B): B
-    def foldMap[A, B](as: F[A])(f: A => B)(mb: Monoid[B]): B =
-      foldLeft(as)(mb.zero)((b, a) => mb.op(b, f(a)))
-    def concatenate[A](as: F[A])(m: Monoid[A]): A = foldLeft(as)(m.zero)(m.op)
-
-    def toList[A](as: F[A]): List[A] = foldRight(as)(List.empty[A])(_ :: _)
-  }
-
   object FoldableList extends Foldable[List] {
-    def foldRight[A, B](as: List[A])(z: B)(f: (A, B) => B): B =
+    override def foldRight[A, B](as: List[A])(z: B)(f: (A, B) => B): B =
       foldLeft(as.reverse)(z)((a, b) => f(b, a))
 
-    def foldLeft[A, B](as: List[A])(z: B)(f: (B, A) => B): B =
+    override def foldLeft[A, B](as: List[A])(z: B)(f: (B, A) => B): B =
       as match {
         case head :: tail => foldLeft(tail)(f(z, head))(f)
         case Nil          => z
@@ -131,9 +145,9 @@ object Instances {
   }
 
   object FoldableStream extends Foldable[Stream] {
-    def foldRight[A, B](as: Stream[A])(z: B)(f: (A, B) => B): B =
+    override def foldRight[A, B](as: Stream[A])(z: B)(f: (A, B) => B): B =
       as.foldRight(z)(f)
-    def foldLeft[A, B](as: Stream[A])(z: B)(f: (B, A) => B): B =
+    override def foldLeft[A, B](as: Stream[A])(z: B)(f: (B, A) => B): B =
       as.foldLeft(z)(f)
   }
 
@@ -142,14 +156,16 @@ object Instances {
   case class Branch[A](left: Tree[A], right: Tree[A]) extends Tree[A]
 
   object FoldableTree extends Foldable[Tree] {
-    def foldRight[A, B](as: Tree[A])(z: B)(f: (A, B) => B): B = as match {
-      case Leaf(value)  => f(value, z)
-      case Branch(l, r) => foldRight(l)(foldRight(r)(z)(f))(f)
-    }
-    def foldLeft[A, B](as: Tree[A])(z: B)(f: (B, A) => B): B = as match {
-      case Leaf(value)  => f(z, value)
-      case Branch(l, r) => foldLeft(r)(foldLeft(l)(z)(f))(f)
-    }
+    override def foldRight[A, B](as: Tree[A])(z: B)(f: (A, B) => B): B =
+      as match {
+        case Leaf(value)  => f(value, z)
+        case Branch(l, r) => foldRight(l)(foldRight(r)(z)(f))(f)
+      }
+    override def foldLeft[A, B](as: Tree[A])(z: B)(f: (B, A) => B): B =
+      as match {
+        case Leaf(value)  => f(z, value)
+        case Branch(l, r) => foldLeft(r)(foldLeft(l)(z)(f))(f)
+      }
     override def foldMap[A, B](as: Tree[A])(f: A => B)(mb: Monoid[B]): B =
       as match {
         case Leaf(v)      => f(v)
@@ -164,13 +180,13 @@ object Instances {
         case None    => mb.zero
       }
 
-    def foldLeft[A, B](o: Option[A])(z: B)(f: (B, A) => B): B =
+    override def foldLeft[A, B](o: Option[A])(z: B)(f: (B, A) => B): B =
       o match {
         case Some(a) => f(z, a)
         case None    => z
       }
 
-    def foldRight[A, B](o: Option[A])(z: B)(f: (A, B) => B): B =
+    override def foldRight[A, B](o: Option[A])(z: B)(f: (A, B) => B): B =
       o match {
         case Some(a) => f(a, z)
         case None    => z
@@ -195,8 +211,10 @@ object Instances {
     new Monoid[Map[K, V]] {
       val zero = Map[K, V]()
       def op(a: Map[K, V], b: Map[K, V]): Map[K, V] =
-        (a.keySet ++ b.keySet).foldLeft(zero)((acc, k) =>
-          acc.updated(k, V.op(a.getOrElse(k, V.zero), b.getOrElse(k, V.zero))))
+        (a.keySet ++ b.keySet).foldLeft(zero)(
+          (acc, k) =>
+            acc.updated(k, V.op(a.getOrElse(k, V.zero), b.getOrElse(k, V.zero)))
+        )
     }
 
   def bag[A](as: List[A]): Map[A, Int] =
@@ -216,7 +234,8 @@ object Main extends App {
 
   assert(concatenate[String](List("1", "b"), stringConcatenation) == "1b")
   assert(
-    foldMapV(List(1, 2, 3, 4, 5), stringConcatenation)(_.toString) == "12345")
+    foldMapV(List(1, 2, 3, 4, 5), stringConcatenation)(_.toString) == "12345"
+  )
 
   //  assertEq(countWords("test two"), 2)
   assert(isOrdered(List()))
