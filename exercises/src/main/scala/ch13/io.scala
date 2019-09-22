@@ -229,7 +229,6 @@ object ConsoleIO {
       def apply[A](a: Console[A]) = a.toThunk
     }))
 
-
   val program = for {
     _ <- Console.printLn("Type something, please...")
     ln <- Console.readLn
@@ -241,9 +240,11 @@ object ConsoleIO {
   def runConsolePar[A](a: Free[Console, A]): Par.Par[A] =
     runFree(a)(consoleToPar)
 
-
-  trait Source{
-    def readBytes(numBytes: Int, callback: Either[Throwable, Array[Byte]] => Unit): Unit
+  trait Source {
+    def readBytes(
+        numBytes: Int,
+        callback: Either[Throwable, Array[Byte]] => Unit
+    ): Unit
   }
 
 }

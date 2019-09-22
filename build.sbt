@@ -12,6 +12,6 @@ lazy val root = (project in file("."))
 lazy val exercises = (project in file("exercises"))
   .settings(commonSettings)
   .settings(
-    Compile / mainClass := Some("fpinscala.ch13.io.Main"),
+    Compile / mainClass := Some("fpinscala.ch14.st.Main"),
     name := "exercises"
   )
