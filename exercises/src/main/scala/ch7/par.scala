@@ -1,3 +1,5 @@
+package fpinscala.ch7.par
+
 import java.util.concurrent.{ExecutorService, Executors, Future, Callable}
 import scala.concurrent.duration.TimeUnit
 
