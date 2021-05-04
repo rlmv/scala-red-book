@@ -167,23 +167,25 @@ object Main extends App {
   def qs[S](a: STArray[S, Int], n: Int, r: Int): ST[S, Unit] =
     if (n < r)
       for {
-        pi <- partition(a, n, r, n + (r - n ) / 2)
+        pi <- partition(a, n, r, n + (r - n) / 2)
         _ <- qs(a, n, pi - 1)
         _ <- qs(a, pi + 1, r)
       } yield ()
     else noop[S]
 
   def quicksort(xs: List[Int]): List[Int] =
-    if (xs.isEmpty) xs else ST.runST(new RunnableST[List[Int]] {
-      def apply[S] = for {
-        arr <- STArray.fromList(xs)
-        size <- arr.size
-        _ <- qs(arr, 0, size -1)
-        sorted <- arr.freeze
-      } yield sorted
-    })
+    if (xs.isEmpty) xs
+    else
+      ST.runST(new RunnableST[List[Int]] {
+        def apply[S] =
+          for {
+            arr <- STArray.fromList(xs)
+            size <- arr.size
+            _ <- qs(arr, 0, size - 1)
+            sorted <- arr.freeze
+          } yield sorted
+      })
 
-
-  println(quicksort(List(5, 3, 6, 20, 1 , 0, 0)))
+  println(quicksort(List(5, 3, 6, 20, 1, 0, 0)))
 
 }
